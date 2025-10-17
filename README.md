@@ -40,7 +40,7 @@ cargo build --release
 
 After building, you can find the compiled binary at:
 
-```
+```bash
 target/release/generate_keypair
 ```
 
@@ -71,7 +71,8 @@ Each keypair is displayed in a clean, separated section for easy reading or copy
 
 ## 🧱 Example Output
 
-```=== Keypair 1 ===
+```bash
+=== Keypair 1 ===
 Public address (Base58):  9xQeWvG816bUx9EP8YkH...
 Private key (Base58, 64 bytes):  3cYgJz1u8qY9...
 Private key (JSON array, 64 bytes):  [154,232,43,102,21,...]
