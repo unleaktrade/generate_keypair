@@ -21,12 +21,12 @@ fn main() {
         println!(
             "{} {}",
             "Public address (Base58):".bold(),
-            pubkey.bold().bright_blue()
+            pubkey.bold().bright_cyan()
         );
         println!(
             "{} {}",
             "Private key (Base58, 64 bytes):".bold(),
-            secret_base58.bold().bright_purple()
+            secret_base58.bright_purple()
         );
         println!(
             "{} {}",
