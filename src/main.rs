@@ -6,7 +6,8 @@ use std::str::FromStr;
 fn main() {
     // Parse count from first CLI arg (default: 1)
     let args: Vec<String> = env::args().skip(1).collect();
-    let count = args.get(0)
+    let count = args
+        .get(0)
         .map(|s| usize::from_str(s).unwrap_or_else(|_| fail(s)))
         .unwrap_or(1);
 
@@ -40,11 +41,7 @@ fn main() {
 }
 
 fn fail(got: &str) -> ! {
-    eprintln!(
-        "{} {}",
-        "Invalid count:".bold().red(),
-        got
-    );
+    eprintln!("{} {}", "Invalid count:".bold().red(), got);
     eprintln!("Usage: cargo run -- <count>");
     std::process::exit(2);
 }
