@@ -14,6 +14,8 @@ fn main() {
     for i in 1..=count {
         let keypair = Keypair::new();
         let pubkey = keypair.pubkey().to_string();
+        let pubkey_32 = keypair.pubkey().to_bytes(); // [u8; 32][file:20]
+        let pubkey_json_array = serde_json::to_string(&pubkey_32).unwrap(); // "[12,34,...]"[file:20]
         let secret_64 = keypair.to_bytes();
         let secret_base58 = bs58::encode(secret_64).into_string();
         let secret_json_array = serde_json::to_string(&secret_64.to_vec()).unwrap();
@@ -24,14 +26,21 @@ fn main() {
             "Public address (Base58):".bold(),
             pubkey.bold().bright_cyan()
         );
+
         println!(
             "{} {}",
-            "Private key (Base58, 64 bytes):".bold(),
+            "Public key (JSON array, 32 bytes):".bold(),
+            pubkey_json_array
+        ); 
+
+        println!(
+            "{} {}",
+            "Secret key (Base58, 64 bytes):".bold(),
             secret_base58.bright_purple()
         );
         println!(
             "{} {}",
-            "Private key (JSON array, 64 bytes):".bold(),
+            "Secret key (JSON array, 64 bytes):".bold(),
             secret_json_array
         );
         if i != count {
