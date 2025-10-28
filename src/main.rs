@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bip39::{Language, Mnemonic, MnemonicType}; // tiny-bip39
+use bip39::{Language, Mnemonic, MnemonicType}; // tiny-bip39 via Cargo alias in Cargo.toml
 use clap::Parser;
 use colored::*;
 use serde_json;
@@ -9,18 +9,20 @@ use solana_sdk::signature::{Keypair, SeedDerivable, Signer};
 #[command(
     name = "generate_keypair",
     version,
-    about = "Generate Solana ed25519 keypairs (random), generate mnemonics, or derive from mnemonic"
+    about = "Generate Solana ed25519 keypairs, generate 12-word mnemonics, or derive from a mnemonic (no derivation path)",
+    long_about = None,
+    disable_help_subcommand = true
 )]
 struct Cli {
     /// Count:
     /// - Random mode: number of keypairs
-    /// - Mnemonic generation: number of mnemonics
+    /// - Mnemonic generation: number of mnemonic+keypair pairs
     /// - Derive-from-mnemonic: repeats the same keypair N times (no path)
     #[arg(short = 'n', long = "num", default_value_t = 1)]
     num: usize,
 
     /// Mnemonic mode (long-only):
-    /// - If set without a value: generate 12-word English mnemonics
+    /// - If set without a value: generate 12-word English mnemonic(s) and show their derived keypair(s)
     /// - If set with a phrase: derive Solana keypair(s) from that phrase (no derivation path)
     ///
     /// Examples:
@@ -30,21 +32,20 @@ struct Cli {
     #[arg(long = "mnemonic")]
     mnemonic: Option<Option<String>>,
 
-    /// Optional BIP39 passphrase used only when deriving from a provided phrase
+    /// Optional BIP39 passphrase when deriving from a provided phrase
     #[arg(long = "passphrase", default_value = "")]
     passphrase: String,
 }
 
-fn print_keypair(kp: &Keypair, index: Option<usize>) {
+fn print_full_block(kp: &Keypair, mnemonic_for_display: Option<&str>, index: usize) {
     let pubkey = kp.pubkey();
     let secret = kp.to_bytes();        // 64 bytes (sk||pk)
     let pub_bytes = pubkey.to_bytes(); // 32 bytes
 
-    let header = match index {
-        Some(i) => format!("=== Keypair {} ===", i + 1),
-        None => "=== Keypair ===".to_string(),
-    };
-    println!("{}", header.yellow());
+    println!("{}", format!("=== Keypair {} ===", index).yellow());
+    if let Some(m) = mnemonic_for_display {
+        println!("Mnemonic (12 words): {}", m);
+    }
     println!("Public address (Base58): {}", pubkey.to_string().blue());
     println!(
         "Public key (JSON array, 32 bytes): {}",
@@ -67,7 +68,7 @@ fn gen_mnemonic_12() -> String {
 }
 
 fn keypair_from_mnemonic(phrase: &str, passphrase: &str) -> Result<Keypair> {
-    // Validate phrase (tiny-bip39) and derive via Solana SDK (no path)
+    // Validate phrase (tiny-bip39); derive Solana keypair via SeedDerivable (no derivation path)
     Mnemonic::from_phrase(phrase, Language::English)
         .map_err(|e| anyhow::anyhow!("invalid BIP39 mnemonic: {e}"))?;
     let kp = Keypair::from_seed_phrase_and_passphrase(phrase, passphrase)
@@ -79,27 +80,26 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match &cli.mnemonic {
-        // --mnemonic with no value -> generate 12-word English mnemonics
+        // --mnemonic with no value -> for each count: generate a 12-word mnemonic, derive keypair, print both
         Some(None) => {
-            for _ in 0..cli.num {
+            for i in 1..=cli.num {
                 let phrase = gen_mnemonic_12();
-                println!("{}", "=== Mnemonic (12 words) ===".yellow());
-                println!("{}", phrase);
-                println!();
+                let kp = keypair_from_mnemonic(&phrase, &cli.passphrase)?;
+                print_full_block(&kp, Some(&phrase), i);
             }
         }
-        // --mnemonic "phrase" -> derive keypair(s) from provided phrase
+        // --mnemonic "phrase" -> derive keypair(s) from provided phrase, print full blocks (no derivation path)
         Some(Some(phrase)) => {
             let kp = keypair_from_mnemonic(phrase, &cli.passphrase)?;
-            for i in 0..cli.num {
-                print_keypair(&kp, Some(i));
+            for i in 1..=cli.num {
+                print_full_block(&kp, None, i);
             }
         }
-        // No --mnemonic -> random Solana keypairs
+        // No --mnemonic -> random Solana keypairs (classic)
         None => {
-            for i in 0..cli.num {
+            for i in 1..=cli.num {
                 let kp = Keypair::new();
-                print_keypair(&kp, Some(i));
+                print_full_block(&kp, None, i);
             }
         }
     }
