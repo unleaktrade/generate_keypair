@@ -1,56 +1,101 @@
+use clap::{Parser, Subcommand};
 use colored::*;
-use solana_sdk::{signature::Keypair, signer::Signer};
-use std::env;
-use std::str::FromStr;
+use serde::Serialize;
+use solana_sdk::signature::{Keypair, Signer};
+use bip39::{Language, Mnemonic, Seed};
 
-fn main() {
-    // Parse count from first CLI arg (default: 1)
-    let args: Vec<String> = env::args().skip(1).collect();
-    let count = args
-        .get(0)
-        .map(|s| usize::from_str(s).unwrap_or_else(|_| fail(s)))
-        .unwrap_or(1);
-
-    for i in 1..=count {
-        let keypair = Keypair::new();
-        let pubkey = keypair.pubkey().to_string();
-        let pubkey_32 = keypair.pubkey().to_bytes(); // [u8; 32][file:20]
-        let pubkey_json_array = serde_json::to_string(&pubkey_32).unwrap(); // "[12,34,...]"[file:20]
-        let secret_64 = keypair.to_bytes();
-        let secret_base58 = bs58::encode(secret_64).into_string();
-        let secret_json_array = serde_json::to_string(&secret_64.to_vec()).unwrap();
-
-        println!("{}", format!("=== Keypair {i} ===").bold().bright_yellow());
-        println!(
-            "{} {}",
-            "Public address (Base58):".bold(),
-            pubkey.bold().bright_cyan()
-        );
-
-        println!(
-            "{} {}",
-            "Public key (JSON array, 32 bytes):".bold(),
-            pubkey_json_array
-        ); 
-
-        println!(
-            "{} {}",
-            "Secret key (Base58, 64 bytes):".bold(),
-            secret_base58.bright_purple()
-        );
-        println!(
-            "{} {}",
-            "Secret key (JSON array, 64 bytes):".bold(),
-            secret_json_array
-        );
-        if i != count {
-            println!(); // blank line between entries
-        }
-    }
+#[derive(Parser, Debug)]
+#[command(name = "generate_keypair", version, about = "Generate Solana ed25519 keypairs")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Cmd>,
+    /// Number of random keypairs (default 1) for default mode
+    #[arg(short = 'n', long = "num", default_value_t = 1)]
+    num: usize,
 }
 
-fn fail(got: &str) -> ! {
-    eprintln!("{} {}", "Invalid count:".bold().red(), got);
-    eprintln!("Usage: cargo run -- <count>");
-    std::process::exit(2);
+#[derive(Subcommand, Debug)]
+enum Cmd {
+    /// Generate a single keypair from a BIP39 mnemonic (no derivation path)
+    Mnemonic {
+        /// BIP39 mnemonic phrase
+        #[arg(long)]
+        phrase: String,
+        /// Optional BIP39 passphrase
+        #[arg(long, default_value = "")]
+        passphrase: String,
+    },
+}
+
+#[derive(Serialize)]
+struct KeypairJson {
+    public_key_base58: String,
+    public_key_array_32: Vec<u8>,
+    secret_key_base58_64: String,
+    secret_key_array_64: Vec<u8>,
+}
+
+fn print_keypair(kp: &Keypair, index: Option<usize>) {
+    let pubkey = kp.pubkey();
+    let secret = kp.to_bytes(); // 64 bytes (sk||pk)
+    let pub_bytes = pubkey.to_bytes(); // 32 bytes
+
+    if let Some(i) = index {
+        println!("=== Keypair {} ===", i + 1);
+    } else {
+        println!("=== Keypair ===");
+    }
+
+    println!("Public address (Base58): {}", pubkey.to_string().blue());
+    println!(
+        "Public key (JSON array, 32 bytes): {}",
+        serde_json::to_string(&pub_bytes.to_vec()).unwrap()
+    );
+    println!(
+        "Secret key (Base58, 64 bytes): {}",
+        bs58::encode(&secret).into_string().purple()
+    );
+    println!(
+        "Secret key (JSON array, 64 bytes): {}",
+        serde_json::to_string(&secret.to_vec()).unwrap()
+    );
+    println!();
+}
+
+fn keypair_from_mnemonic(phrase: &str, passphrase: &str) -> Result<Keypair, String> {
+    let mnemonic = Mnemonic::parse_in(Language::English, phrase)
+        .map_err(|e| format!("mnemonic error: {e}"))?;
+    let seed = Seed::new(&mnemonic, passphrase);
+    let seed_bytes = seed.as_bytes();
+    if seed_bytes.len() < 32 {
+        return Err("seed bytes < 32".into());
+    }
+    // ASK/no-derivation-path mode: use first 32 bytes as ed25519 seed
+    let mut seed32 = [0u8; 32];
+    seed32.copy_from_slice(&seed_bytes[..32]);
+    // Build a Solana Keypair deterministically from the 32-byte seed
+    let kp = Keypair::from_seed(&seed32)
+        .map_err(|e| format!("keypair from seed error: {e}"))?;
+    Ok(kp)
+}
+
+fn main() {
+    let cli = Cli::parse();
+    match &cli.command {
+        Some(Cmd::Mnemonic { phrase, passphrase }) => {
+            match keypair_from_mnemonic(phrase, passphrase) {
+                Ok(kp) => print_keypair(&kp, None),
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        None => {
+            for i in 0..cli.num {
+                let kp = Keypair::new();
+                print_keypair(&kp, Some(i));
+            }
+        }
+    }
 }
