@@ -1,51 +1,50 @@
-use clap::{Parser, Subcommand};
+use anyhow::Result;
+use bip39::{Language, Mnemonic, MnemonicType}; // tiny-bip39
+use clap::Parser;
 use colored::*;
-use serde::Serialize;
-use solana_sdk::signature::{Keypair, Signer};
-use bip39::{Language, Mnemonic, Seed};
+use serde_json;
+use solana_sdk::signature::{Keypair, SeedDerivable, Signer};
 
 #[derive(Parser, Debug)]
-#[command(name = "generate_keypair", version, about = "Generate Solana ed25519 keypairs")]
+#[command(
+    name = "generate_keypair",
+    version,
+    about = "Generate Solana ed25519 keypairs (random), generate mnemonics, or derive from mnemonic"
+)]
 struct Cli {
-    #[command(subcommand)]
-    command: Option<Cmd>,
-    /// Number of random keypairs (default 1) for default mode
+    /// Count:
+    /// - Random mode: number of keypairs
+    /// - Mnemonic generation: number of mnemonics
+    /// - Derive-from-mnemonic: repeats the same keypair N times (no path)
     #[arg(short = 'n', long = "num", default_value_t = 1)]
     num: usize,
-}
 
-#[derive(Subcommand, Debug)]
-enum Cmd {
-    /// Generate a single keypair from a BIP39 mnemonic (no derivation path)
-    Mnemonic {
-        /// BIP39 mnemonic phrase
-        #[arg(long)]
-        phrase: String,
-        /// Optional BIP39 passphrase
-        #[arg(long, default_value = "")]
-        passphrase: String,
-    },
-}
+    /// Mnemonic mode (long-only):
+    /// - If set without a value: generate 12-word English mnemonics
+    /// - If set with a phrase: derive Solana keypair(s) from that phrase (no derivation path)
+    ///
+    /// Examples:
+    ///   --mnemonic
+    ///   --mnemonic -n 5
+    ///   --mnemonic "abandon abandon ... about"
+    #[arg(long = "mnemonic")]
+    mnemonic: Option<Option<String>>,
 
-#[derive(Serialize)]
-struct KeypairJson {
-    public_key_base58: String,
-    public_key_array_32: Vec<u8>,
-    secret_key_base58_64: String,
-    secret_key_array_64: Vec<u8>,
+    /// Optional BIP39 passphrase used only when deriving from a provided phrase
+    #[arg(long = "passphrase", default_value = "")]
+    passphrase: String,
 }
 
 fn print_keypair(kp: &Keypair, index: Option<usize>) {
     let pubkey = kp.pubkey();
-    let secret = kp.to_bytes(); // 64 bytes (sk||pk)
+    let secret = kp.to_bytes();        // 64 bytes (sk||pk)
     let pub_bytes = pubkey.to_bytes(); // 32 bytes
 
-    if let Some(i) = index {
-        println!("=== Keypair {} ===", i + 1);
-    } else {
-        println!("=== Keypair ===");
-    }
-
+    let header = match index {
+        Some(i) => format!("=== Keypair {} ===", i + 1),
+        None => "=== Keypair ===".to_string(),
+    };
+    println!("{}", header.yellow());
     println!("Public address (Base58): {}", pubkey.to_string().blue());
     println!(
         "Public key (JSON array, 32 bytes): {}",
@@ -62,35 +61,41 @@ fn print_keypair(kp: &Keypair, index: Option<usize>) {
     println!();
 }
 
-fn keypair_from_mnemonic(phrase: &str, passphrase: &str) -> Result<Keypair, String> {
-    let mnemonic = Mnemonic::parse_in(Language::English, phrase)
-        .map_err(|e| format!("mnemonic error: {e}"))?;
-    let seed = Seed::new(&mnemonic, passphrase);
-    let seed_bytes = seed.as_bytes();
-    if seed_bytes.len() < 32 {
-        return Err("seed bytes < 32".into());
-    }
-    // ASK/no-derivation-path mode: use first 32 bytes as ed25519 seed
-    let mut seed32 = [0u8; 32];
-    seed32.copy_from_slice(&seed_bytes[..32]);
-    // Build a Solana Keypair deterministically from the 32-byte seed
-    let kp = Keypair::from_seed(&seed32)
-        .map_err(|e| format!("keypair from seed error: {e}"))?;
+fn gen_mnemonic_12() -> String {
+    let m = Mnemonic::new(MnemonicType::Words12, Language::English);
+    m.phrase().to_string()
+}
+
+fn keypair_from_mnemonic(phrase: &str, passphrase: &str) -> Result<Keypair> {
+    // Validate phrase (tiny-bip39) and derive via Solana SDK (no path)
+    Mnemonic::from_phrase(phrase, Language::English)
+        .map_err(|e| anyhow::anyhow!("invalid BIP39 mnemonic: {e}"))?;
+    let kp = Keypair::from_seed_phrase_and_passphrase(phrase, passphrase)
+        .map_err(|e| anyhow::anyhow!("failed to derive keypair: {e}"))?;
     Ok(kp)
 }
 
-fn main() {
+fn main() -> Result<()> {
     let cli = Cli::parse();
-    match &cli.command {
-        Some(Cmd::Mnemonic { phrase, passphrase }) => {
-            match keypair_from_mnemonic(phrase, passphrase) {
-                Ok(kp) => print_keypair(&kp, None),
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    std::process::exit(1);
-                }
+
+    match &cli.mnemonic {
+        // --mnemonic with no value -> generate 12-word English mnemonics
+        Some(None) => {
+            for _ in 0..cli.num {
+                let phrase = gen_mnemonic_12();
+                println!("{}", "=== Mnemonic (12 words) ===".yellow());
+                println!("{}", phrase);
+                println!();
             }
         }
+        // --mnemonic "phrase" -> derive keypair(s) from provided phrase
+        Some(Some(phrase)) => {
+            let kp = keypair_from_mnemonic(phrase, &cli.passphrase)?;
+            for i in 0..cli.num {
+                print_keypair(&kp, Some(i));
+            }
+        }
+        // No --mnemonic -> random Solana keypairs
         None => {
             for i in 0..cli.num {
                 let kp = Keypair::new();
@@ -98,4 +103,6 @@ fn main() {
             }
         }
     }
+
+    Ok(())
 }
